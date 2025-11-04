@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Docker Compose configuration for GPU deployment
 # Requires nvidia-docker runtime
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Default configuration - GPU optimized
 # For CPU-only, use: docker-compose -f docker-compose.cpu.yml up
 # For GPU, use: docker-compose -f docker-compose.gpu.yml up

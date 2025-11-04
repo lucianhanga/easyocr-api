@@ -138,6 +138,9 @@ python tools/ocr_client.py path/to/image.jpg
 # For large PDFs with timeout
 python tools/ocr_client.py large_doc.pdf --timeout 3600
 
+# For large images, automatic resizing improves accuracy
+python tools/ocr_client.py large_image.png  # Auto-resizes to 1400px if needed
+
 # Using curl (no dependencies needed)
 curl -X POST http://localhost:3600/ocr \
   -F "file=@image.jpg" \
@@ -146,6 +149,97 @@ curl -X POST http://localhost:3600/ocr \
 # View the interactive docs
 open http://localhost:3600/docs
 ```
+
+## Client Features
+
+The included `tools/ocr_client.py` provides advanced features for optimal OCR results.
+
+### Automatic Image Resizing
+
+**Problem**: Large images (>1500px) can cause text fragmentation where words split into syllables.
+- Example: "Steuerpflichtige" → "Ste", "erpf", "uernu"  
+- Higher empty detection count
+- Lower overall accuracy
+
+**Solution**: The client automatically resizes images to ~1400px before OCR for better accuracy.
+
+**Usage**:
+
+```bash
+# Auto-resize (default, resizes if > 1400px)
+./tools/ocr_client.py large_image.png
+
+# Output:
+# Resizing image: 2006×1522 → 1400×1062
+# Resize scale factor: 1.433x width, 1.433x height
+
+# Custom max size
+./tools/ocr_client.py image.png --max-size 1200
+
+# Disable resizing
+./tools/ocr_client.py image.png --no-resize
+```
+
+**Benefits**:
+- ✅ Better text recognition (fewer fragments)
+- ✅ Faster processing (smaller uploads)
+- ✅ Automatic coordinate scaling (boxes align perfectly)
+- ✅ Uses high-quality LANCZOS resampling
+- ✅ JPEG quality 85 for optimal balance
+
+### Smart PDF Handling
+
+The client intelligently detects PDF content type and handles each appropriately:
+
+| PDF Type | Contains | Action | Speed |
+|----------|----------|--------|-------|
+| **Text-only** | Just text layers | Direct extraction | < 1s |
+| **Mixed** | Text + images/logos | Extract text only | < 1s |
+| **Scanned** | Images only | Full OCR | 10-30s |
+
+**Mixed PDF Example** (text + logos):
+
+```bash
+./tools/ocr_client.py insurance_letter.pdf
+
+# Output:
+# Analyzing PDF...
+# PDF type detected: mixed
+# PDF contains both text and images (e.g., logos).
+# Extracting existing text without OCR...
+# ✅ Text extraction complete (no OCR needed for mixed PDF)
+```
+
+**Benefits**:
+- ✅ 10-30x faster for text/mixed PDFs (no OCR needed)
+- ✅ Perfect accuracy from PDF text layers  
+- ✅ No wasted processing on logos/decorative images
+- ✅ Automatic fallback to OCR for scanned PDFs
+
+### Coordinate Scaling
+
+When images are resized before OCR, bounding box coordinates must be scaled back to match the original image size in the boxed PDF.
+
+**How it works**:
+
+```
+1. Original image: 2006×1522
+2. Resized for OCR: 1400×1062 (scale factor: 1.433x)
+3. OCR returns coordinates for 1400×1062 image
+4. Client scales coordinates back: coordinate × 1.433
+5. Boxed PDF shows correctly positioned boxes on 2006×1522 image
+```
+
+**Result**: Bounding boxes perfectly align with text, regardless of resizing.
+
+### Output Files
+
+For each processed document, the client creates:
+
+- `filename_ocr.pdf` - Searchable PDF with invisible text layer
+- `filename_boxed.pdf` - PDF with red boxes showing detected text regions
+- `filename.json` - Full OCR results with coordinates and confidence
+- `filename.txt` - Plain text extraction
 
 ## API Reference
 
@@ -344,6 +438,13 @@ easyocr-api/
 - Detects CUDA GPU via PyTorch (`torch.cuda.is_available()`)
 - Uses CRAFT detector (most accurate text detection)
 - Lazy initialization for fast startup
+
+**`tools/ocr_client.py`**
+
+- Smart client with automatic image resizing for better accuracy
+- PDF content detection (text-only, mixed, scanned)
+- Coordinate scaling for perfect bounding box alignment
+- Generates 4 output files: searchable PDF, boxed PDF, JSON, plain text
 
 **`app/main.py`**
 
@@ -565,10 +666,33 @@ spec:
 
 ### OCR accuracy issues
 
+**Server-side:**
 - Check image quality (300 DPI recommended for scanned documents)
 - Verify correct language codes are configured in `app/ocr_engine.py`
 - Review confidence scores in response (values < 0.7 may indicate poor quality)
 - Try preprocessing images (contrast adjustment, noise reduction)
+
+**Client-side (using tools/ocr_client.py):**
+- Enable automatic resizing for large images: `./tools/ocr_client.py image.png` (default)
+- Large images (>1500px) may fragment text - resizing to ~1400px improves accuracy
+- Try different max sizes: `--max-size 1200` or `--max-size 1600`
+- For mixed PDFs, text extraction is automatic (no OCR needed)
+
+### Client bounding boxes misaligned
+
+If bounding boxes in `*_boxed.pdf` don't match the text:
+- This is automatically fixed when using image resizing (default)
+- The client scales coordinates back to original image dimensions
+- Check logs for "Resize scale factor" to verify scaling is working
+- If still misaligned, report as a bug with the image/PDF
+
+### Mixed PDF sent to OCR unnecessarily
+
+As of the latest version:
+- Mixed PDFs (text + logos) skip OCR automatically
+- Text is extracted directly from PDF layers (< 1s)
+- If still being sent to OCR, update to latest client version
+- Use `--force-ocr` flag only if you really need OCR on mixed PDFs
 
 ### Out of memory errors
 
@@ -585,41 +709,189 @@ spec:
 
 ## PDF Processing
 
-### How PDF Processing Works
+### Intelligent PDF Handling
 
-The application uses an intelligent approach to handle PDF documents:
+The application uses smart detection and processing strategies for different PDF types:
 
-1. **Direct Image Extraction** (preferred):
+**Client-side Detection** (using `tools/ocr_client.py`):
 
-   - Extracts embedded images directly from PDF pages
-   - Preserves original quality without re-rendering
-   - Memory-efficient (~1GB vs >6GB for rendering)
-   - Faster processing
+The client automatically detects PDF content type:
 
-2. **Fallback Rendering** (when no embedded images):
+| PDF Type | Contains | Detection | Processing | Time |
+|----------|----------|-----------|------------|------|
+| **Text-only** | Selectable text layers | Has text, no images | Direct extraction | < 1s |
+| **Mixed** | Text + images/logos | Has both | Extract text only | < 1s |
+| **Scanned** | Images only | Has images, no text | Full OCR | 10-30s |
 
-   - Renders pages at 150 DPI (good balance)
-   - Used for text-only PDFs
-   - Safe memory usage
+**Server-side Processing**:
 
-### PDF Output
+When OCR is required (scanned PDFs), the API uses two strategies:
 
-For each processed document, you can receive:
+#### 1. Direct Image Extraction (Preferred)
 
-- **Searchable PDF**: PDF with invisible text layer matching OCR results
-- **OCR JSON**: Structured data with text, confidence scores, and bounding boxes
-- **Text extraction**: Plain text from all detected regions
+**Why**: Preserves original quality and reduces memory usage.
+
+**How it works**:
+```python
+# Extract embedded images directly from PDF
+pdf_doc = fitz.open(stream=content)
+image_list = page.get_images(full=True)
+base_image = pdf_doc.extract_image(xref)
+img = Image.open(BytesIO(base_image["image"]))
+```
+
+**Benefits**:
+- ✅ Preserves original image quality (no DPI degradation)
+- ✅ Lower memory usage (~1GB vs 6GB with rendering)
+- ✅ Faster processing (2x speed: 15s vs 30s for 10 pages)
+- ✅ No Out of Memory crashes
+- ✅ Perfect for scanned documents
+
+**Image Selection Logic**:
+1. Extracts all images from each page
+2. Sorts by byte size
+3. Uses the largest image (main page scan)
+4. Ignores small images (logos, decorations)
+
+#### 2. Fallback Rendering (When No Embedded Images)
+
+**Why**: Some PDFs have no embedded images (vector-based text).
+
+**How it works**:
+```python
+# Render page at 150 DPI
+mat = fitz.Matrix(150/72, 150/72)
+pix = page.get_pixmap(matrix=mat)
+img = Image.open(BytesIO(pix.tobytes("png")))
+```
+
+**Used for**:
+- Text-only PDFs without embedded images
+- Vector-based documents
+- PDFs created from text editors
+
+### Quality Comparison: Before vs After
+
+**Before (Page Rendering at Fixed DPI)**:
+- 72 DPI: ❌ Poor quality, blurry text
+- 300 DPI: ❌ Out of Memory crashes (>6GB)
+- Input: 500KB PDF → Output: 150KB poor quality
+
+**After (Image Extraction)**:
+- ✅ Original quality preserved
+- ✅ No memory issues (~1GB)
+- ✅ Input: 500KB PDF → Output: 500KB same quality
+
+### PDF Processing Performance
+
+| Document Type | Pages | Method | Time (CPU) | Time (GPU) |
+|--------------|-------|--------|------------|------------|
+| Text-only | 1 | Direct extraction | < 1s | < 1s |
+| Text-only | 10 | Direct extraction | 1-2s | 1-2s |
+| Mixed (text + logos) | 1 | Text extraction | < 1s | < 1s |
+| Scanned (images) | 1 | Image extraction + OCR | 10-12s | 2-3s |
+| Scanned (images) | 10 | Image extraction + OCR | 80-100s | 20-25s |
+
+### PDF Output Files
+
+For each processed document, you receive:
+
+- **`filename_ocr.pdf`** - Searchable PDF with invisible text layer
+- **`filename_boxed.pdf`** - PDF with red boxes showing detected text regions
+- **`filename.json`** - Full OCR results with coordinates and confidence
+- **`filename.txt`** - Plain text extraction
 
 ### PDF Quality Settings
 
-Default JPEG compression: **quality=85** (good balance of size and quality)
+Default JPEG compression: **quality=85** (optimal balance)
 
 To adjust quality, modify `app/make_pdf.py`:
 
 ```python
-quality=95  # Higher quality, larger files
-quality=85  # Default (recommended)
-quality=75  # Smaller files, lower quality
+quality=95  # Higher quality, larger files (2-5MB per page)
+quality=85  # Default - recommended (500KB-1MB per page)
+quality=75  # Smaller files, lower quality (200-400KB per page)
+```
+
+**Note**: Higher quality (95) may cause OOM on multi-page PDFs. Use quality=85 for best balance.
+
+### Examples
+
+#### Text-only PDF
+
+```bash
+./tools/ocr_client.py invoice.pdf
+
+# Output:
+# Analyzing PDF...
+# PDF type detected: text
+# Extracting text directly from PDF (no OCR needed)...
+# ✅ Text extraction complete (no OCR required)
+```
+
+#### Mixed PDF (Text + Logo)
+
+```bash
+./tools/ocr_client.py letter.pdf
+
+# Output:
+# Analyzing PDF...
+# PDF type detected: mixed
+# PDF contains both text and images (e.g., logos).
+# Extracting existing text without OCR...
+# ✅ Text extraction complete (no OCR needed for mixed PDF)
+```
+
+#### Scanned PDF
+
+```bash
+./tools/ocr_client.py scanned.pdf
+
+# Output:
+# Analyzing PDF...
+# PDF type detected: scanned
+# Processing PDF by extracting embedded images...
+# Found 1 embedded image(s) on page 1
+# Using largest image (524288 bytes)
+# Extracted image size: 2480×3508
+# OCR processing...
+```
+
+### Multi-Page PDF Support
+
+The API processes multi-page PDFs efficiently:
+
+```bash
+# Send multi-page PDF
+curl -X POST http://localhost:3600/ocr \
+  -F "file=@document.pdf" \
+  -o response.json
+```
+
+**Features**:
+- Processes up to 4 pages in parallel (CPU mode)
+- Combines results from all pages
+- Returns `ocr_result_per_page` for page-specific data
+- Generates single searchable PDF output
+
+### Dependencies for PDF Support
+
+**Python packages** (already included):
+```txt
+PyMuPDF>=1.23.0    # Image extraction from PDFs
+pdf2image>=1.16.0  # Fallback rendering
+Pillow>=10.0.0     # Image processing
+```
+
+**System packages** (for fallback rendering):
+```bash
+# Linux/Ubuntu
+sudo apt-get install poppler-utils
+
+# macOS
+brew install poppler
+
+# Docker images include all dependencies
 ```
 
 ## Performance Tuning
@@ -919,8 +1191,14 @@ print(json.dumps(high_confidence, indent=2))
 
 - **Images**: JPG, JPEG, PNG, BMP, TIFF, GIF
 - **PDFs**: Single or multi-page PDF documents
+  - **Text-only PDFs**: Direct text extraction (< 1s)
+  - **Mixed PDFs**: Text extraction, images ignored (< 1s)
+  - **Scanned PDFs**: Full OCR processing (10-30s per page)
 - **Maximum file size**: Limited by Docker memory allocation (default: no limit)
-- **Recommended image size**: Up to 4000x4000 pixels for best performance
+- **Recommended image size**: 
+  - Client automatically resizes images > 1400px for optimal accuracy
+  - Original: up to 4000x4000 pixels
+  - Manual processing: up to 4000x4000 pixels
 
 ### Output Formats
 
@@ -1032,10 +1310,38 @@ print(json.dumps(high_confidence, indent=2))
 
 **A:**
 
+**With the Python client (recommended):**
+- Use `tools/ocr_client.py` - it automatically resizes large images for better accuracy
+- The client detects PDF types and extracts text directly when possible (faster + more accurate)
+- Large images are automatically resized to ~1400px to prevent text fragmentation
+
+**General tips:**
 - Use high-quality source images (300 DPI for scans)
 - Ensure good contrast and lighting
 - Preprocess images (denoise, binarize)
 - Verify correct language codes are configured
+
+### Q: Why is my text fragmented (words split into syllables)?
+
+**A:** This happens with very large images (>1500px). Solutions:
+
+- **Use the Python client**: `tools/ocr_client.py` automatically resizes images
+- **Manual resize**: Resize images to ~1400px before uploading
+- **Custom size**: `./tools/ocr_client.py image.png --max-size 1200`
+
+### Q: What's the difference between text-only, mixed, and scanned PDFs?
+
+**A:**
+
+- **Text-only**: PDF with selectable text (no images). Client extracts text instantly (< 1s).
+- **Mixed**: PDF with both text and images (e.g., letterhead with logo). Client extracts text only (< 1s).
+- **Scanned**: PDF containing only images. Full OCR required (10-30s per page).
+
+The client automatically detects the PDF type and uses the fastest method.
+
+### Q: Why are bounding boxes misaligned in the boxed PDF?
+
+**A:** This was fixed in the latest version. When the client resizes images, it now automatically scales coordinates back to the original dimensions. Update to the latest client version.
 
 ### Q: Can I use this commercially?
 

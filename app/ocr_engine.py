@@ -113,10 +113,16 @@ class OCREngine:
 
         # Run OCR with detailed output
         # Returns: [([[x0,y0], [x1,y1], [x2,y2], [x3,y3]], text, confidence), ...]
+        # Tuned parameters for better text grouping and recognition:
+        # - width_ths: Horizontal distance threshold for merging boxes (default 0.5)
+        # - height_ths: Vertical distance threshold (default 0.5)
+        # - add_margin: Extra margin around detected text (default 0.1)
         results = self.reader.readtext(
             image_rgb,
             detail=1,  # Return bounding boxes
-            paragraph=False,  # Don't merge lines
+            paragraph=False,  # Don't merge lines into paragraphs
+            width_ths=1.0,  # Increase horizontal merging threshold for better word grouping
+            add_margin=0.15,  # Slightly more margin to capture complete characters
         )
 
         # Convert EasyOCR format to standardized format

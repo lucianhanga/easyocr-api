@@ -139,7 +139,7 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                     
                     logger.info(f"  Using largest image ({original_size_bytes} bytes)")
                     
-                    # Extract and compress image
+                    # Extract image and convert to RGB (no compression yet - keep original quality for OCR)
                     img = Image.open(BytesIO(largest_image_bytes)).convert("RGB")
                     original_size = img.size
                     logger.info(f"  Extracted image size: {original_size[0]}x{original_size[1]}")
@@ -147,26 +147,11 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                     # Release original image bytes immediately
                     del largest_image_bytes, images_with_size
                     
-                    # Compress to JPEG quality 85
-                    compressed_buf = BytesIO()
-                    img.save(compressed_buf, format='JPEG', quality=85, optimize=True)
-                    compressed_size = len(compressed_buf.getvalue())
-                    logger.info(f"  Compressed from {original_size_bytes} bytes to {compressed_size} bytes (quality=85)")
-                    
-                    # Reload the compressed image
-                    compressed_buf.seek(0)
-                    img = Image.open(compressed_buf)
-                    img.load()
-                    
-                    # Release compressed buffer
-                    del compressed_buf
-                    
-                    # Run OCR on compressed image
-                    img_array = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR)
+                    # Run OCR on ORIGINAL uncompressed image to preserve text quality
+                    img_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                    logger.info(f"  Running OCR on image array shape: {img_array.shape}")
                     result = ocr_model.ocr(img_array, cls=False)
-                    
-                    # Release img_array immediately after OCR
-                    del img_array
+                    logger.info(f"  OCR completed, processing {len(result[0]) if result and result[0] else 0} detections")
 
                     for line in (result[0] if result and result[0] else []):
                         bbox, (text, confidence) = line
@@ -175,11 +160,11 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                             "confidence": float(confidence),
                             "bbox": [[float(x), float(y)] for x, y in bbox]
                         })
-                    
-                    # Release OCR result
-                    del result
 
                     logger.info(f"  Page {page_num + 1} OCR found {len(page_results)} text items")
+                    
+                    # Release memory after processing results
+                    del img_array, result
             else:
                 # No embedded images - fall back to rendering the page
                 logger.info(f"  Page {page_num + 1} has no embedded images, rendering at 150 DPI...")
@@ -198,10 +183,9 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                 
                 # Run OCR
                 img_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                logger.info(f"  Running OCR on rendered image array shape: {img_array.shape}")
                 result = ocr_model.ocr(img_array, cls=False)
-                
-                # Release img_array immediately
-                del img_array
+                logger.info(f"  OCR completed, processing {len(result[0]) if result and result[0] else 0} detections")
 
                 for line in (result[0] if result and result[0] else []):
                     bbox, (text, confidence) = line
@@ -210,11 +194,11 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                         "confidence": float(confidence),
                         "bbox": [[float(x), float(y)] for x, y in bbox]
                     })
-                
-                # Release OCR result
-                del result
 
                 logger.info(f"  Page {page_num + 1} OCR found {len(page_results)} text items")
+                
+                # Release memory after processing results
+                del img_array, result
             
             thread_pdf_doc.close()
             
@@ -408,8 +392,12 @@ async def ocr_endpoint(file: UploadFile = File(...)):
             # Single image processing
             logger.info("Processing single image...")
             img = Image.open(BytesIO(content)).convert("RGB")
+            logger.info(f"Image loaded: {img.size[0]}x{img.size[1]} mode={img.mode}")
+            
             img_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            logger.info(f"Running OCR on array shape: {img_array.shape}")
             result = ocr_model.ocr(img_array, cls=False)
+            logger.info(f"OCR returned {len(result[0]) if result and result[0] else 0} detections")
 
             page_results = []
             for line in (result[0] if result and result[0] else []):

@@ -1,0 +1,37 @@
+version: '3.8'
+
+# Default configuration - GPU optimized
+# For CPU-only, use: docker-compose -f docker-compose.cpu.yml up
+# For GPU, use: docker-compose -f docker-compose.gpu.yml up
+
+services:
+  ocr-api-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: easyocr-api:gpu
+    container_name: easyocr-api-gpu
+    ports:
+      - "3600:3600"
+    environment:
+      - LOG_LEVEL=INFO
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:3600/_health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

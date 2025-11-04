@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  ocr-api-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: easyocr-api:cpu
+    container_name: easyocr-api-cpu
+    ports:
+      - "3600:3600"
+    environment:
+      - LOG_LEVEL=INFO
+      # CPU optimization settings
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - TORCH_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+    restart: unless-stopped
+    # CPU resource allocation - adjust based on your system
+    deploy:
+      resources:
+        limits:
+          cpus: '8'  # Use up to 8 CPU cores
+          memory: 8G
+        reservations:
+          cpus: '4'  # Reserve at least 4 cores
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:3600/_health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

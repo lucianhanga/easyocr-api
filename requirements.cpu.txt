@@ -1,0 +1,28 @@
+# EasyOCR API - CPU Optimized Dependencies
+# Minimal production dependencies for CPU-only execution
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.1
+
+# OCR engine (EasyOCR with PyTorch CPU-only)
+easyocr==1.7.2
+torch==2.1.2+cpu
+torchvision==0.16.2+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# PDF generation and handling
+PyMuPDF==1.23.26
+
+# Image processing
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+
+# Form-data uploads
+python-multipart==0.0.9
+
+# HTTP client for health checks
+requests==2.31.0
+
+# Numpy (explicitly specify for compatibility)
+numpy==1.24.3

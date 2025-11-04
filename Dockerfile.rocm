@@ -1,0 +1,64 @@
+# ---------------------------
+# EasyOCR API with ROCm Support
+# For AMD GPUs (Radeon Instinct MI25, etc.)
+# ---------------------------
+# Uses ROCm-enabled PyTorch for AMD GPU acceleration
+# Tested on: AMD Radeon Instinct MI25 (Standard NV8as v4)
+
+FROM rocm/pytorch:rocm6.1.3_ubuntu22.04_py3.10_pytorch_release-2.1.2
+
+# Install Python 3.11 and system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 python3.11-dev python3.11-distutils python3-pip \
+    libglib2.0-0 libsm6 libxrender1 libxext6 \
+    libgl1 libgomp1 \
+    libjpeg-dev zlib1g \
+    gcc g++ make \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+# Upgrade pip
+RUN python3.11 -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+# Copy requirements (we'll install PyTorch separately for ROCm)
+COPY requirements.txt /app/requirements.txt
+
+# Install PyTorch with ROCm support first
+# ROCm 6.1 is compatible with PyTorch 2.1+
+RUN pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/rocm6.0
+
+# Install other dependencies (excluding torch/torchvision since we installed them above)
+RUN grep -v "^torch" requirements.txt > requirements_no_torch.txt && \
+    pip install --no-cache-dir -r requirements_no_torch.txt
+
+# Copy application code
+COPY app /app/app
+
+# Environment variables
+ENV LOG_LEVEL=INFO
+ENV HSA_OVERRIDE_GFX_VERSION=9.0.0
+ENV PYTORCH_ROCM_ARCH=gfx900
+
+# Preload EasyOCR models at build time
+RUN python -c "\
+import logging; \
+logging.basicConfig(level=logging.INFO); \
+from app.ocr_engine import OCREngine; \
+print('Preloading EasyOCR models...'); \
+engine = OCREngine(); \
+engine._lazy_init(); \
+print('✅ EasyOCR models cached')"
+
+EXPOSE 3600
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:3600/_health').raise_for_status()"
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3600", "--timeout-keep-alive", "300", "--limit-concurrency", "1000", "--backlog", "2048"]

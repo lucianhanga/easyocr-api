@@ -1,0 +1,21 @@
+# EasyOCR API - High-accuracy multilingual OCR
+# Production dependencies only
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.1
+
+# OCR engine (EasyOCR with PyTorch)
+easyocr==1.7.2
+torch>=2.0.0
+torchvision>=0.15.0
+
+# PDF generation and handling
+PyMuPDF>=1.23.0
+
+# Image processing
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+
+# Form-data uploads
+python-multipart==0.0.9

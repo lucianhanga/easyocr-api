@@ -1,0 +1,59 @@
+# ---------------------------
+# EasyOCR API - CPU Optimized
+# High-accuracy OCR for mixed printed/handwritten text
+# Optimized for multi-core CPU parallel processing
+# ---------------------------
+
+FROM python:3.11-slim
+
+# Set timezone non-interactively
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/London
+
+# Install system dependencies for OpenCV and parallel processing
+RUN apt-get update && apt-get install -y \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    libgomp1 \
+    tzdata \
+    && ln -fs /usr/share/zoneinfo/Europe/London /etc/localtime \
+    && dpkg-reconfigure --frontend noninteractive tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install Python dependencies (CPU-only)
+COPY requirements.cpu.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app /app/app
+
+# Environment variables for CPU optimization
+ENV LOG_LEVEL=INFO
+ENV OMP_NUM_THREADS=4
+ENV MKL_NUM_THREADS=4
+ENV OPENBLAS_NUM_THREADS=4
+ENV TORCH_NUM_THREADS=4
+ENV NUMEXPR_NUM_THREADS=4
+
+# Preload EasyOCR models at build time
+RUN python -c "\
+import logging; \
+logging.basicConfig(level=logging.INFO); \
+from app.ocr_engine import OCREngine; \
+print('Preloading EasyOCR models (CPU mode)...'); \
+engine = OCREngine(); \
+engine._lazy_init(); \
+print('✅ EasyOCR models cached for CPU')"
+
+EXPOSE 3600
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:3600/_health').raise_for_status()"
+
+# CPU-optimized: Allow more concurrent requests since we're processing pages in parallel
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3600", "--timeout-keep-alive", "300", "--workers", "1", "--limit-concurrency", "500"]

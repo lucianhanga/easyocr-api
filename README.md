@@ -133,10 +133,10 @@ curl http://localhost:3600/_health
 pip install requests
 
 # Using the example client
-python examples/ocr_client.py path/to/image.jpg
+python tools/ocr_client.py path/to/image.jpg
 
 # For large PDFs with timeout
-python examples/ocr_client.py large_doc.pdf --timeout 3600
+python tools/ocr_client.py large_doc.pdf --timeout 3600
 
 # Using curl (no dependencies needed)
 curl -X POST http://localhost:3600/ocr \
@@ -226,10 +226,10 @@ API information and links.
 
 **Configuration:**
 ```bash
-# Use CPU-optimized Docker image
+# Use CPU-optimized Docker image (recommended for production)
 docker-compose -f docker-compose.cpu.yml up
 
-# Or with standard Dockerfile
+# Or with base Dockerfile (auto-detects CPU/GPU)
 docker build -t easyocr-api .
 docker run -p 3600:3600 easyocr-api
 ```
@@ -310,16 +310,17 @@ easyocr-api/
 │   ├── main.py           # FastAPI application with /ocr endpoint
 │   ├── ocr_engine.py     # EasyOCR wrapper with GPU/CPU detection
 │   └── make_pdf.py       # Searchable PDF generation
-├── examples/
-│   ├── ocr_client.py     # Python client example
-│   └── create_sample_image.py
-├── Dockerfile            # CPU-optimized image
-├── Dockerfile.gpu        # GPU-optimized image
-├── Dockerfile.cpu        # Explicit CPU image
-├── docker-compose.yml    # Default deployment
-├── docker-compose.gpu.yml # GPU deployment
-├── docker-compose.cpu.yml # CPU deployment
-└── requirements.txt      # Python dependencies
+├── tools/
+│   └── ocr_client.py     # Python client example
+├── Dockerfile            # Base image (auto-detects CPU/GPU)
+├── Dockerfile.cpu        # CPU-optimized image
+├── Dockerfile.gpu        # GPU-optimized image (CUDA)
+├── docker-compose.yml    # Default deployment (GPU)
+├── docker-compose.cpu.yml # CPU-only deployment
+├── docker-compose.gpu.yml # GPU deployment (explicit)
+├── requirements.txt      # Base Python dependencies
+├── requirements.cpu.txt  # CPU-specific dependencies
+└── requirements.gpu.txt  # GPU-specific dependencies (with CUDA)
 ```
 
 ### Key Components
@@ -406,6 +407,21 @@ pip install -r requirements.txt
 # Run development server (with auto-reload)
 uvicorn app.main:app --reload --port 3600
 ```
+
+### Understanding the Docker Images
+
+This project provides **3 Dockerfiles** for different deployment scenarios:
+
+| Dockerfile | Purpose | Use Case |
+|------------|---------|----------|
+| `Dockerfile` | **Base/Auto-detect** | Auto-detects GPU via PyTorch. Good for development or when hardware is uncertain. |
+| `Dockerfile.cpu` | **CPU-optimized** | Production CPU deployments. Uses CPU-specific PyTorch, optimized for multi-core processing. |
+| `Dockerfile.gpu` | **GPU-optimized** | Production GPU deployments. Uses CUDA-enabled PyTorch, requires NVIDIA GPU. |
+
+**Which one to use?**
+- **Development**: Use `Dockerfile` (auto-detects)
+- **Production CPU**: Use `Dockerfile.cpu` with `docker-compose.cpu.yml`
+- **Production GPU**: Use `Dockerfile.gpu` with `docker-compose.gpu.yml`
 
 ### Docker Deployment (CPU)
 

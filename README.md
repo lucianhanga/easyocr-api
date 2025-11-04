@@ -7,7 +7,7 @@ High-accuracy OCR REST API using EasyOCR with HuggingFace models. Supports **NVI
 - **High Accuracy:** EasyOCR with CRAFT detector for superior text detection
 - **Multilingual:** European languages (English, French, German, Spanish, Italian, Portuguese)
 - **Mixed Text:** Handles both printed and handwritten text
-- **Hardware Smart:** 
+- **Hardware Smart:**
   - Auto-detects **NVIDIA CUDA GPU** when available
   - Seamlessly falls back to CPU if no GPU detected
   - Parallel processing for multi-page PDFs (4 pages concurrently on GPU, 4 on CPU)
@@ -154,12 +154,14 @@ open http://localhost:3600/docs
 Perform OCR on an uploaded image.
 
 **Request:**
+
 ```bash
 curl -X POST http://localhost:8000/ocr \
   -F "file=@image.jpg"
 ```
 
 **Response:**
+
 ```json
 {
   "ocr_result": [
@@ -174,6 +176,7 @@ curl -X POST http://localhost:8000/ocr \
 ```
 
 **Fields:**
+
 - `text`: Recognized text
 - `confidence`: Recognition confidence (0.0-1.0)
 - `bbox`: Bounding box coordinates `[[x0,y0], [x1,y1], [x2,y2], [x3,y3]]` (clockwise from top-left)
@@ -188,6 +191,7 @@ curl http://localhost:8000/_health
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -212,19 +216,21 @@ API information and links.
 | NVIDIA RTX 4090 | 1.6-1.9s | **6-7x faster** | High-volume production |
 | AWS V100 | 1.8-2.2s | **5-6x faster** | Cloud deployment |
 
-*Tested on typical document images (A4, 300 DPI, ~3MB)*
+**Note:** Tested on typical document images (A4, 300 DPI, ~3MB)
 
 ### CPU vs GPU Deployment
 
 #### CPU Deployment
 
 **When to Use:**
+
 - Development and testing environments
 - Low-volume workloads (<100 documents/day)
 - Cost-sensitive deployments
 - GPU not available
 
 **Configuration:**
+
 ```bash
 # Use CPU-optimized Docker image (recommended for production)
 docker-compose -f docker-compose.cpu.yml up
@@ -235,6 +241,7 @@ docker run -p 3600:3600 easyocr-api
 ```
 
 **Performance:**
+
 - 10-20 seconds per page
 - 4 pages processed in parallel
 - Memory: 2-4 GB RAM
@@ -243,17 +250,20 @@ docker run -p 3600:3600 easyocr-api
 #### GPU Deployment (NVIDIA CUDA)
 
 **When to Use:**
+
 - Production environments
 - High-volume workloads (100+ documents/day)
 - Real-time or near real-time processing
 - Cost per document matters more than infrastructure cost
 
 **Requirements:**
+
 - NVIDIA GPU with CUDA 11.0+
 - 4GB+ VRAM recommended
 - nvidia-docker runtime installed
 
 **Configuration:**
+
 ```bash
 # Use GPU-optimized Docker image
 docker-compose -f docker-compose.gpu.yml up
@@ -264,6 +274,7 @@ docker run --gpus all -p 3600:3600 easyocr-api:gpu
 ```
 
 **Performance:**
+
 - 1-3 seconds per page
 - 4 pages processed in parallel
 - Memory: 3-5 GB VRAM + 2-3 GB RAM
@@ -274,6 +285,7 @@ docker run --gpus all -p 3600:3600 easyocr-api:gpu
 The application automatically detects available hardware at startup:
 
 **Detection Logic (in `app/ocr_engine.py`):**
+
 ```python
 def _detect_hardware(self) -> str:
     """Detect available hardware acceleration."""
@@ -285,13 +297,14 @@ def _detect_hardware(self) -> str:
             return "cuda"
     except Exception as e:
         logger.warning(f"Error detecting CUDA: {e}")
-    
+
     logger.info("Using CPU for inference")
     return "cpu"
 ```
 
 **Startup Logs:**
-```
+
+```text
 # GPU detected:
 INFO:app.ocr_engine:CUDA GPU detected: NVIDIA RTX 4090
 INFO:app.ocr_engine:Initializing OCR engine: languages=['en', 'fr', 'de', 'es', 'it', 'pt'], device=cuda
@@ -419,6 +432,7 @@ This project provides **3 Dockerfiles** for different deployment scenarios:
 | `Dockerfile.gpu` | **GPU-optimized** | Production GPU deployments. Uses CUDA-enabled PyTorch, requires NVIDIA GPU. |
 
 **Which one to use?**
+
 - **Development**: Use `Dockerfile` (auto-detects)
 - **Production CPU**: Use `Dockerfile.cpu` with `docker-compose.cpu.yml`
 - **Production GPU**: Use `Dockerfile.gpu` with `docker-compose.gpu.yml`
@@ -559,17 +573,15 @@ spec:
 ### Out of memory errors
 
 **CPU Mode:**
+
 - Reduce parallel page processing in `app/main.py` (change `max_workers` from 4 to 2)
 - Increase Docker memory limit: `docker run --memory="6g" ...`
 
 **GPU Mode:**
+
 - Reduce batch size or image resolution
 - Monitor VRAM usage: `nvidia-smi -l 1`
 - Ensure GPU has 4GB+ VRAM available
-
-## License
-
-See LICENSE file.
 
 ## PDF Processing
 
@@ -578,12 +590,14 @@ See LICENSE file.
 The application uses an intelligent approach to handle PDF documents:
 
 1. **Direct Image Extraction** (preferred):
+
    - Extracts embedded images directly from PDF pages
    - Preserves original quality without re-rendering
    - Memory-efficient (~1GB vs >6GB for rendering)
    - Faster processing
 
 2. **Fallback Rendering** (when no embedded images):
+
    - Renders pages at 150 DPI (good balance)
    - Used for text-only PDFs
    - Safe memory usage
@@ -601,6 +615,7 @@ For each processed document, you can receive:
 Default JPEG compression: **quality=85** (good balance of size and quality)
 
 To adjust quality, modify `app/make_pdf.py`:
+
 ```python
 quality=95  # Higher quality, larger files
 quality=85  # Default (recommended)
@@ -612,17 +627,20 @@ quality=75  # Smaller files, lower quality
 ### CPU Deployment Optimization
 
 1. **Adjust parallel processing:**
+
    - Edit `app/main.py`, find `ThreadPoolExecutor(max_workers=4)`
    - Reduce to 2 for systems with <4 cores
    - Increase to 8 for systems with 8+ cores
 
 2. **Environment variables:**
+
    ```bash
    docker run -e OMP_NUM_THREADS=4 -p 3600:3600 easyocr-api
    # Set to match your CPU core count
    ```
 
 3. **Docker resource limits:**
+
    ```yaml
    resources:
      limits:
@@ -633,24 +651,27 @@ quality=75  # Smaller files, lower quality
 ### GPU Deployment Optimization
 
 1. **Monitor GPU utilization:**
+
    ```bash
    # Watch GPU usage in real-time
    nvidia-smi -l 1
-   
+
    # GPU-Util should show activity (10-90%) during processing
    ```
 
 2. **Multiple GPUs:**
+
    ```bash
    # Use specific GPU
    docker run -e CUDA_VISIBLE_DEVICES=0 --gpus all -p 3600:3600 easyocr-api:gpu
-   
+
    # Run multiple containers on different GPUs
    docker run -e CUDA_VISIBLE_DEVICES=0 --gpus '"device=0"' -p 3601:3600 easyocr-api:gpu
    docker run -e CUDA_VISIBLE_DEVICES=1 --gpus '"device=1"' -p 3602:3600 easyocr-api:gpu
    ```
 
 3. **Batch processing tips:**
+
    - EasyOCR automatically batches text recognition
    - Larger batches = better GPU utilization
    - Default settings are optimal for most cases
@@ -673,6 +694,7 @@ curl http://localhost:3600/_health
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -691,6 +713,7 @@ The application provides structured logging with timestamps and severity levels:
 - **ERROR**: Error messages
 
 **View logs:**
+
 ```bash
 # Docker
 docker logs -f <container-name>
@@ -704,6 +727,7 @@ docker logs <container-name> | grep "ERROR"
 ```
 
 **Set log level:**
+
 ```bash
 # Via environment variable
 docker run -e LOG_LEVEL=DEBUG -p 3600:3600 easyocr-api
@@ -716,6 +740,7 @@ environment:
 ### Performance Metrics in Logs
 
 Each OCR request logs:
+
 - Request method and path
 - Content type
 - Processing time
@@ -724,7 +749,8 @@ Each OCR request logs:
 - Response status code
 
 Example:
-```
+
+```text
 INFO:app:Request: POST /ocr - Content-Type: multipart/form-data
 INFO:app:PDF has 5 pages - processing up to 4 pages in parallel
 INFO:app:Success: 142 OCR items from 5 pages
@@ -741,6 +767,7 @@ INFO:app:Response: 200
 ### What's Included
 
 **Both images contain:**
+
 - Python 3.11
 - FastAPI + Uvicorn
 - EasyOCR with HuggingFace models
@@ -750,23 +777,27 @@ INFO:app:Response: 200
 - Pre-downloaded EasyOCR models (~140MB)
 
 **GPU image additionally includes:**
+
 - PyTorch with CUDA 12.1 support
 - NVIDIA CUDA Runtime libraries
 
 ### Build Options
 
 **Standard build:**
+
 ```bash
 docker build -t easyocr-api .                          # CPU
 docker build -f Dockerfile.gpu -t easyocr-api:gpu .    # GPU
 ```
 
 **Build with custom tag:**
+
 ```bash
 docker build -t myregistry/easyocr-api:v1.0 .
 ```
 
 **Build without cache:**
+
 ```bash
 docker build --no-cache -t easyocr-api .
 ```
@@ -916,23 +947,26 @@ print(json.dumps(high_confidence, indent=2))
 ### Best Practices
 
 1. **Run as non-root user** (add to Dockerfile):
+
    ```dockerfile
    RUN useradd -m -u 1000 ocr
    USER ocr
    ```
 
 2. **Use environment variables for secrets**:
+
    ```bash
    docker run -e API_KEY=$API_KEY -p 3600:3600 easyocr-api
    ```
 
 3. **Enable HTTPS** with reverse proxy (nginx, Traefik):
+
    ```nginx
    server {
        listen 443 ssl;
        ssl_certificate /path/to/cert.pem;
        ssl_certificate_key /path/to/key.pem;
-       
+
        location / {
            proxy_pass http://localhost:3600;
        }
@@ -940,10 +974,11 @@ print(json.dumps(high_confidence, indent=2))
    ```
 
 4. **Implement authentication** (add to FastAPI):
+
    ```python
    from fastapi.security import HTTPBearer
    security = HTTPBearer()
-   
+
    @app.post("/ocr")
    async def ocr_endpoint(token: str = Depends(security)):
        # Verify token
@@ -957,27 +992,32 @@ print(json.dumps(high_confidence, indent=2))
 ### Upgrading from Previous Versions
 
 1. **Backup your data**:
+
    ```bash
    docker commit <container-id> easyocr-api:backup
    ```
 
 2. **Pull or build new image**:
+
    ```bash
    docker build -t easyocr-api:latest .
    ```
 
 3. **Stop old container**:
+
    ```bash
    docker stop <container-id>
    docker rm <container-id>
    ```
 
 4. **Start new container**:
+
    ```bash
    docker run -d -p 3600:3600 --name ocr-service easyocr-api:latest
    ```
 
 5. **Verify health**:
+
    ```bash
    curl http://localhost:3600/_health
    ```
@@ -985,33 +1025,43 @@ print(json.dumps(high_confidence, indent=2))
 ## FAQ
 
 ### Q: Can I process images and PDFs in the same request?
+
 **A:** Each request handles one file (image or PDF). For batch processing, send multiple requests.
 
 ### Q: How do I improve OCR accuracy?
-**A:** 
+
+**A:**
+
 - Use high-quality source images (300 DPI for scans)
 - Ensure good contrast and lighting
 - Preprocess images (denoise, binarize)
 - Verify correct language codes are configured
 
 ### Q: Can I use this commercially?
+
 **A:** Yes, but check the licenses of dependencies (EasyOCR, PyTorch, etc.)
 
 ### Q: How do I handle very large PDFs?
-**A:** 
+
+**A:**
+
 - Increase timeout: `--timeout 3600` in client
 - Increase Docker memory: `--memory="8g"`
 - Process in smaller batches
 - Consider splitting PDFs into smaller files
 
 ### Q: Does this work with handwriting?
+
 **A:** Yes, EasyOCR handles both printed and handwritten text, though accuracy varies with handwriting clarity.
 
 ### Q: Can I run this on ARM processors (M1/M2 Mac, Raspberry Pi)?
+
 **A:** Yes for CPU mode. GPU mode requires NVIDIA GPU (not compatible with Apple Silicon GPUs).
 
 ### Q: How do I reduce Docker image size?
+
 **A:** The images are optimized, but you can:
+
 - Use CPU image (~2-3GB vs 5-6GB for GPU)
 - Remove unused language models
 - Use multi-stage builds (already implemented)
@@ -1019,6 +1069,7 @@ print(json.dumps(high_confidence, indent=2))
 ## Project Roadmap
 
 Potential future enhancements:
+
 - [ ] Support for more document types (DOCX, RTF)
 - [ ] Table detection and extraction
 - [ ] Form field detection
@@ -1043,6 +1094,7 @@ See LICENSE file.
 ## Contributing
 
 Contributions welcome! Please:
+
 1. Fork the repository
 2. Create a feature branch
 3. Submit a pull request

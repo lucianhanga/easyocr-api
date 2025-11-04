@@ -7,12 +7,14 @@ This document explains how the EasyOCR API preserves image quality when processi
 ## The Problem
 
 **Before (Page Rendering):**
+
 - PDF pages were converted to images at a specific DPI (72, 150, 300)
 - Low DPI (72) = Poor quality output
 - High DPI (300) = Excellent quality but causes Out Of Memory (OOM) crashes
 - Re-rendering degrades the original image quality
 
 **Example:**
+
 - Input: 500KB PDF with good quality images
 - Output with 72 DPI: Poor quality, blurry text
 - Output with 300 DPI: Memory crash (exit 137)
@@ -88,6 +90,7 @@ images = convert_from_bytes(content, dpi=300) # OOM crash
 ```
 
 **Results:**
+
 - 72 DPI: ❌ Poor quality
 - 300 DPI: ❌ Memory crash (6GB limit exceeded)
 
@@ -101,6 +104,7 @@ img = Image.open(BytesIO(image_bytes))
 ```
 
 **Results:**
+
 - ✅ Original quality preserved
 - ✅ No memory issues
 - ✅ Faster processing
@@ -115,6 +119,7 @@ img.save(img_buf, format='JPEG', quality=85, optimize=True)
 ```
 
 **Quality levels:**
+
 - `quality=85` - Good balance (default, ~500KB-1MB per page)
 - `quality=95` - Higher quality (~2-5MB per page, can cause OOM on multi-page PDFs)
 - `quality=75` - Lower quality (~200-400KB per page)
@@ -129,7 +134,8 @@ python ocr_client.py ../test_files/scanned_document.pdf
 ```
 
 **Expected output:**
-```
+
+``` bash
 Analyzing PDF...
 PDF type detected: scanned
 Processing PDF by extracting embedded images...
@@ -141,10 +147,12 @@ Extracted image size: 2480x3508
 ### Compare Quality
 
 **Before (72 DPI):**
+
 - Output size: ~150KB
 - Quality: Blurry, hard to read
 
 **After (Image Extraction):**
+
 - Output size: ~500KB (matches input)
 - Quality: Clear, readable, identical to input
 
@@ -193,11 +201,13 @@ No configuration needed! The code automatically:
 ## Performance
 
 **Before (72 DPI):**
+
 - 10-page PDF: ~30 seconds
 - Memory: ~2GB
 - Quality: ❌ Poor
 
 **After (Image Extraction):**
+
 - 10-page PDF: ~15 seconds ⚡
 - Memory: ~1GB 💾
 - Quality: ✅ Original
@@ -205,6 +215,7 @@ No configuration needed! The code automatically:
 ## Dependencies
 
 Required packages:
+
 ```txt
 PyMuPDF>=1.23.0    # For PDF image extraction
 pdf2image>=1.16.0  # Only for fallback rendering
@@ -212,6 +223,7 @@ Pillow>=10.0.0     # Image processing
 ```
 
 System packages:
+
 ```bash
 # Only needed for fallback rendering
 apt-get install poppler-utils
@@ -230,6 +242,7 @@ If the extracted image is very small, it might be a logo or icon. The code selec
 ### "Quality still poor"
 
 Check:
+
 1. Is the input PDF already low quality?
 2. JPEG quality setting in `make_pdf.py` (default: 85)
 3. Consider increasing quality to 95 for better results (uses more memory)

@@ -5,12 +5,14 @@ Thank you for considering contributing to this project!
 ## Development Setup
 
 1. **Clone the repository**
+
    ```bash
    git clone <repository-url>
    cd easyocr-api
    ```
 
 2. **Set up development environment**
+
    ```bash
    python3 -m venv venv
    source venv/bin/activate
@@ -18,6 +20,7 @@ Thank you for considering contributing to this project!
    ```
 
 3. **Run the development server**
+
    ```bash
    ./run.sh
    # Or manually:

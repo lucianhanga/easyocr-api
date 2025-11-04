@@ -1,0 +1,13 @@
+# Client tools only - Minimal dependencies for OCR client
+# Use this if you only want to run the OCR client tools without the server
+# No CUDA, GPU, or heavy ML dependencies needed
+
+# HTTP client for API calls
+requests>=2.28.0
+
+# Image processing (for bounding boxes and image handling)
+Pillow>=10.0.0
+
+# PDF generation and handling
+PyMuPDF>=1.23.0
+reportlab>=4.0.0

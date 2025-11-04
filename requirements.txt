@@ -1,5 +1,5 @@
 # EasyOCR API - High-accuracy multilingual OCR
-# Production dependencies only
+# Production dependencies and client tools
 
 # Web framework
 fastapi==0.115.0
@@ -19,3 +19,7 @@ opencv-python-headless==4.10.0.84
 
 # Form-data uploads
 python-multipart==0.0.9
+
+# Client tools dependencies
+requests>=2.28.0
+reportlab>=4.0.0

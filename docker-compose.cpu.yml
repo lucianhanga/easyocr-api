@@ -9,12 +9,12 @@ services:
       - "3600:3600"
     environment:
       - LOG_LEVEL=INFO
-      # CPU optimization settings
-      - OMP_NUM_THREADS=4
-      - MKL_NUM_THREADS=4
-      - OPENBLAS_NUM_THREADS=4
-      - TORCH_NUM_THREADS=4
-      - NUMEXPR_NUM_THREADS=4
+      # CPU optimization settings - reduced to prevent memory overload
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - TORCH_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
     restart: unless-stopped
     # CPU resource allocation - adjust based on your system
     deploy:

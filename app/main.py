@@ -16,6 +16,7 @@ from typing import List
 import logging
 import os
 import base64
+import gc
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -134,28 +135,38 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                     # Get the largest image (main page scan)
                     images_with_size.sort(reverse=True, key=lambda x: x[0])
                     largest_image_bytes = images_with_size[0][1]
+                    original_size_bytes = images_with_size[0][0]
                     
-                    logger.info(f"  Using largest image ({images_with_size[0][0]} bytes)")
+                    logger.info(f"  Using largest image ({original_size_bytes} bytes)")
                     
                     # Extract and compress image
                     img = Image.open(BytesIO(largest_image_bytes)).convert("RGB")
                     original_size = img.size
                     logger.info(f"  Extracted image size: {original_size[0]}x{original_size[1]}")
                     
+                    # Release original image bytes immediately
+                    del largest_image_bytes, images_with_size
+                    
                     # Compress to JPEG quality 85
                     compressed_buf = BytesIO()
                     img.save(compressed_buf, format='JPEG', quality=85, optimize=True)
                     compressed_size = len(compressed_buf.getvalue())
-                    logger.info(f"  Compressed from {images_with_size[0][0]} bytes to {compressed_size} bytes (quality=85)")
+                    logger.info(f"  Compressed from {original_size_bytes} bytes to {compressed_size} bytes (quality=85)")
                     
                     # Reload the compressed image
                     compressed_buf.seek(0)
                     img = Image.open(compressed_buf)
                     img.load()
                     
+                    # Release compressed buffer
+                    del compressed_buf
+                    
                     # Run OCR on compressed image
                     img_array = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR)
                     result = ocr_model.ocr(img_array, cls=False)
+                    
+                    # Release img_array immediately after OCR
+                    del img_array
 
                     for line in (result[0] if result and result[0] else []):
                         bbox, (text, confidence) = line
@@ -164,6 +175,9 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                             "confidence": float(confidence),
                             "bbox": [[float(x), float(y)] for x, y in bbox]
                         })
+                    
+                    # Release OCR result
+                    del result
 
                     logger.info(f"  Page {page_num + 1} OCR found {len(page_results)} text items")
             else:
@@ -172,12 +186,22 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                 mat = fitz.Matrix(150/72, 150/72)  # 150 DPI
                 pix = page.get_pixmap(matrix=mat)
                 img_bytes = pix.tobytes("png")
+                
+                # Release pixmap immediately
+                pix = None
+                
                 img = Image.open(BytesIO(img_bytes)).convert("RGB")
                 logger.info(f"  Rendered image size: {img.size[0]}x{img.size[1]}")
+                
+                # Release img_bytes
+                del img_bytes
                 
                 # Run OCR
                 img_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
                 result = ocr_model.ocr(img_array, cls=False)
+                
+                # Release img_array immediately
+                del img_array
 
                 for line in (result[0] if result and result[0] else []):
                     bbox, (text, confidence) = line
@@ -186,21 +210,33 @@ async def ocr_endpoint(file: UploadFile = File(...)):
                         "confidence": float(confidence),
                         "bbox": [[float(x), float(y)] for x, y in bbox]
                     })
+                
+                # Release OCR result
+                del result
 
                 logger.info(f"  Page {page_num + 1} OCR found {len(page_results)} text items")
             
             thread_pdf_doc.close()
+            
+            # Force garbage collection to free memory immediately (important for CPU mode)
+            gc.collect()
+            
             logger.info(f"  Page {page_num + 1} complete")
             
             return page_num, img, page_results
 
         # Process based on type
         if is_pdf and HAS_PDF_SUPPORT:
-            logger.info("Processing PDF by extracting embedded images (parallel processing, 4 workers)...")
+            logger.info("Processing PDF by extracting embedded images...")
             # Open PDF document
             pdf_doc = fitz.open(stream=content, filetype="pdf")
             num_pages = len(pdf_doc)
-            logger.info(f"PDF has {num_pages} pages - processing up to 4 pages in parallel")
+            
+            # Determine max workers based on hardware
+            # CPU: Use 1 worker (sequential) to prevent memory overload with large PDFs
+            # GPU: Use 4 workers since GPU has more memory bandwidth
+            max_workers = 1 if ocr_model.device == "cpu" else 4
+            logger.info(f"PDF has {num_pages} pages - processing {'sequentially' if max_workers == 1 else f'up to {max_workers} pages in parallel'} (device: {ocr_model.device})")
 
             # Close the main PDF doc, we'll reopen it per thread
             pdf_doc.close()
@@ -208,85 +244,150 @@ async def ocr_endpoint(file: UploadFile = File(...)):
             # Create output PDF document immediately
             doc_new = fitz.open()
             
-            # Track results for response (indexed by page number)
-            page_data = {}
-            
-            # Process pages in parallel with up to 4 workers
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                # Submit all pages for processing
-                future_to_page = {
-                    executor.submit(process_page, page_num, content): page_num 
-                    for page_num in range(num_pages)
-                }
-                
-                # Collect results as they complete
-                for future in as_completed(future_to_page):
-                    page_num = future_to_page[future]
-                    try:
-                        result_page_num, img, page_results = future.result()
-                        page_data[result_page_num] = (img, page_results)
-                        logger.info(f"Page {result_page_num + 1} processing completed")
-                    except Exception as e:
-                        logger.exception(f"Error processing page {page_num + 1}: {e}")
-                        page_data[page_num] = (None, [])
-            
-            # Now build the PDF in page order and collect results
+            # Store OCR results for final response
             all_results = []
             per_page_results = []
             
-            for page_num in range(num_pages):
-                img, page_results = page_data.get(page_num, (None, []))
+            # Process pages one by one to minimize memory usage (especially for CPU mode)
+            if max_workers == 1:
+                # Sequential processing - process and add to PDF immediately
+                logger.info("Using sequential processing to minimize memory usage")
+                for page_num in range(num_pages):
+                    try:
+                        result_page_num, img, page_results = process_page(page_num, content)
+                        
+                        # Immediately add this page to the output PDF
+                        if img:
+                            img_width, img_height = img.size
+                            
+                            # Compress image to JPEG in memory
+                            img_buf = BytesIO()
+                            if img.mode in ('RGBA', 'LA', 'P'):
+                                img = img.convert('RGB')
+                            elif img.mode != 'RGB':
+                                img = img.convert('RGB')
+                            
+                            img.save(img_buf, format='JPEG', quality=85, optimize=True)
+                            img_bytes = img_buf.getvalue()
+                            logger.info(f"  Page {page_num + 1} compressed to {len(img_bytes)} bytes for PDF")
+                            
+                            # Convert image to PDF page using PyMuPDF
+                            img_buf.seek(0)
+                            img_doc = fitz.open(stream=img_bytes, filetype="jpeg")
+                            rect = img_doc[0].rect
+                            pdfbytes = img_doc.convert_to_pdf()
+                            img_pdf = fitz.open("pdf", pdfbytes)
+                            
+                            # Create new page and insert image
+                            new_page = doc_new.new_page(width=rect.width, height=rect.height)
+                            new_page.show_pdf_page(rect, img_pdf, 0)
+                            
+                            # Add invisible text layer for searchability
+                            for entry in page_results:
+                                text = entry["text"]
+                                bbox = entry["bbox"]
+                                x0, y0 = bbox[0]
+                                x2, y2 = bbox[2]
+                                text_rect = fitz.Rect(x0, y0, x2, y2)
+                                new_page.insert_textbox(
+                                    text_rect, text, fontsize=10,
+                                    color=(1, 1, 1), fill=(1, 1, 1),
+                                    render_mode=3, align=0
+                                )
+                            
+                            img_doc.close()
+                            img_pdf.close()
+                            
+                            # Release memory immediately
+                            del img, img_buf, img_bytes, img_doc, img_pdf, pdfbytes
+                            gc.collect()
+                        
+                        # Store results for response
+                        all_results.extend(page_results)
+                        per_page_results.append(page_results)
+                        
+                        logger.info(f"  Page {page_num + 1} added to final PDF and memory released")
+                        
+                    except Exception as e:
+                        logger.exception(f"Error processing page {page_num + 1}: {e}")
+                        per_page_results.append([])
+            else:
+                # Parallel processing for GPU mode (original code)
+                logger.info("Using parallel processing")
+                page_data = {}
                 
-                # Add this page to the output PDF
-                if img:
-                    img_width, img_height = img.size
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all pages for processing
+                    future_to_page = {
+                        executor.submit(process_page, page_num, content): page_num 
+                        for page_num in range(num_pages)
+                    }
                     
-                    # Compress image to JPEG in memory
-                    img_buf = BytesIO()
-                    if img.mode in ('RGBA', 'LA', 'P'):
-                        img = img.convert('RGB')
-                    elif img.mode != 'RGB':
-                        img = img.convert('RGB')
-                    
-                    img.save(img_buf, format='JPEG', quality=85, optimize=True)
-                    img_bytes = img_buf.getvalue()
-                    logger.info(f"  Page {page_num + 1} compressed to {len(img_bytes)} bytes for PDF")
-                    
-                    # Convert image to PDF page using PyMuPDF
-                    img_buf.seek(0)
-                    img_doc = fitz.open(stream=img_bytes, filetype="jpeg")
-                    rect = img_doc[0].rect
-                    pdfbytes = img_doc.convert_to_pdf()
-                    img_pdf = fitz.open("pdf", pdfbytes)
-                    
-                    # Create new page and insert image
-                    new_page = doc_new.new_page(width=rect.width, height=rect.height)
-                    new_page.show_pdf_page(rect, img_pdf, 0)
-                    
-                    # Add invisible text layer for searchability
-                    for entry in page_results:
-                        text = entry["text"]
-                        bbox = entry["bbox"]
-                        x0, y0 = bbox[0]
-                        x2, y2 = bbox[2]
-                        text_rect = fitz.Rect(x0, y0, x2, y2)
-                        new_page.insert_textbox(
-                            text_rect, text, fontsize=10,
-                            color=(1, 1, 1), fill=(1, 1, 1),
-                            render_mode=3, align=0
-                        )
-                    
-                    img_doc.close()
-                    img_pdf.close()
-                    
-                    # Release memory
-                    del img, img_buf, img_bytes
+                    # Collect results as they complete
+                    for future in as_completed(future_to_page):
+                        page_num = future_to_page[future]
+                        try:
+                            result_page_num, img, page_results = future.result()
+                            page_data[result_page_num] = (img, page_results)
+                            logger.info(f"Page {result_page_num + 1} processing completed")
+                        except Exception as e:
+                            logger.exception(f"Error processing page {page_num + 1}: {e}")
+                            page_data[page_num] = (None, [])
                 
-                # Store results for response
-                all_results.extend(page_results)
-                per_page_results.append(page_results)
-                
-                logger.info(f"  Page {page_num + 1} added to final PDF")
+                # Build the PDF in page order and collect results
+                for page_num in range(num_pages):
+                    img, page_results = page_data.get(page_num, (None, []))
+                    
+                    # Add this page to the output PDF
+                    if img:
+                        img_width, img_height = img.size
+                        
+                        # Compress image to JPEG in memory
+                        img_buf = BytesIO()
+                        if img.mode in ('RGBA', 'LA', 'P'):
+                            img = img.convert('RGB')
+                        elif img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        img.save(img_buf, format='JPEG', quality=85, optimize=True)
+                        img_bytes = img_buf.getvalue()
+                        logger.info(f"  Page {page_num + 1} compressed to {len(img_bytes)} bytes for PDF")
+                        
+                        # Convert image to PDF page using PyMuPDF
+                        img_buf.seek(0)
+                        img_doc = fitz.open(stream=img_bytes, filetype="jpeg")
+                        rect = img_doc[0].rect
+                        pdfbytes = img_doc.convert_to_pdf()
+                        img_pdf = fitz.open("pdf", pdfbytes)
+                        
+                        # Create new page and insert image
+                        new_page = doc_new.new_page(width=rect.width, height=rect.height)
+                        new_page.show_pdf_page(rect, img_pdf, 0)
+                        
+                        # Add invisible text layer for searchability
+                        for entry in page_results:
+                            text = entry["text"]
+                            bbox = entry["bbox"]
+                            x0, y0 = bbox[0]
+                            x2, y2 = bbox[2]
+                            text_rect = fitz.Rect(x0, y0, x2, y2)
+                            new_page.insert_textbox(
+                                text_rect, text, fontsize=10,
+                                color=(1, 1, 1), fill=(1, 1, 1),
+                                render_mode=3, align=0
+                            )
+                        
+                        img_doc.close()
+                        img_pdf.close()
+                        
+                        # Release memory
+                        del img, img_buf, img_bytes
+                    
+                    # Store results for response
+                    all_results.extend(page_results)
+                    per_page_results.append(page_results)
+                    
+                    logger.info(f"  Page {page_num + 1} added to final PDF")
             
             # Save the complete PDF
             logger.info(f"Saving final PDF with {num_pages} pages...")
